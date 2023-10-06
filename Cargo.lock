@@ -2608,6 +2608,13 @@ name = "roc_ident"
 version = "0.0.1"
 
 [[package]]
+name = "roc_intern"
+version = "0.0.1"
+dependencies = [
+ "bumpalo",
+]
+
+[[package]]
 name = "roc_late_solve"
 version = "0.0.1"
 dependencies = [
