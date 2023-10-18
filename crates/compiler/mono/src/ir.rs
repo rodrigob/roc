@@ -77,8 +77,8 @@ roc_error_macros::assert_sizeof_wasm!(Call, 44);
 roc_error_macros::assert_sizeof_wasm!(CallType, 36);
 
 roc_error_macros::assert_sizeof_non_wasm!(Literal, 3 * 8);
-roc_error_macros::assert_sizeof_non_wasm!(Expr, 10 * 8);
-roc_error_macros::assert_sizeof_non_wasm!(Stmt, 13 * 8);
+roc_error_macros::assert_sizeof_non_wasm!(Expr, 9 * 8);
+roc_error_macros::assert_sizeof_non_wasm!(Stmt, 12 * 8);
 roc_error_macros::assert_sizeof_non_wasm!(ProcLayout, 5 * 8);
 roc_error_macros::assert_sizeof_non_wasm!(Call, 9 * 8);
 roc_error_macros::assert_sizeof_non_wasm!(CallType, 7 * 8);
@@ -198,7 +198,7 @@ impl<'a> PartialProcs<'a> {
     pub fn drain(self) -> impl Iterator<Item = (Symbol, PartialProc<'a>)> {
         debug_assert_eq!(self.symbols.len(), self.partial_procs.len());
 
-        self.symbols.into_iter().zip(self.partial_procs.into_iter())
+        self.symbols.into_iter().zip(self.partial_procs)
     }
 }
 
@@ -541,7 +541,7 @@ impl<'a> ExternalSpecializations<'a> {
             self.storage.into_storage_subs(),
             self.symbol_or_lambda
                 .into_iter()
-                .zip(self.types_to_specialize.into_iter()),
+                .zip(self.types_to_specialize),
         )
     }
 
@@ -656,8 +656,8 @@ impl<'a> Specialized<'a> {
     fn into_iter_assert_done(self) -> impl Iterator<Item = (Symbol, ProcLayout<'a>, Proc<'a>)> {
         self.symbols
             .into_iter()
-            .zip(self.proc_layouts.into_iter())
-            .zip(self.procedures.into_iter())
+            .zip(self.proc_layouts)
+            .zip(self.procedures)
             .filter_map(|((s, l), in_progress)| {
                 if let Symbol::REMOVED_SPECIALIZATION = s {
                     None
@@ -2190,6 +2190,16 @@ impl<'a> Expr<'a> {
             arguments: std::slice::from_ref(symbol),
         })
     }
+
+    pub(crate) fn ptr_store(arguments: &'a [Symbol]) -> Expr<'a> {
+        Expr::Call(Call {
+            call_type: CallType::LowLevel {
+                op: LowLevel::PtrStore,
+                update_mode: UpdateModeId::BACKEND_DUMMY,
+            },
+            arguments,
+        })
+    }
 }
 
 impl<'a> Stmt<'a> {
@@ -3644,11 +3654,24 @@ fn specialize_proc_help<'a>(
 
                                 let symbol = get_specialized_name(**symbol);
 
+                                let fresh_symbol =
+                                    env.named_unique_symbol(&format!("{:?}_closure", symbol));
+
                                 specialized_body = Stmt::Let(
-                                    symbol,
+                                    fresh_symbol,
                                     expr,
                                     layout,
                                     env.arena.alloc(specialized_body),
+                                );
+
+                                // the same symbol may be used where
+                                // - the closure is created
+                                // - the closure is consumed
+                                substitute_in_exprs(
+                                    env.arena,
+                                    &mut specialized_body,
+                                    symbol,
+                                    fresh_symbol,
                                 );
                             }
                         }

@@ -425,9 +425,19 @@ fn list_contains() {
 
 #[cfg(not(feature = "wasm"))]
 #[test]
-fn list_sum() {
+fn list_sum_empty() {
     expect_success("List.sum []", "0 : Num a");
+}
+
+#[cfg(not(feature = "wasm"))]
+#[test]
+fn list_sum_num() {
     expect_success("List.sum [1, 2, 3]", "6 : Num *");
+}
+
+#[cfg(not(feature = "wasm"))]
+#[test]
+fn list_sum_frac() {
     expect_success("List.sum [1.1, 2.2, 3.3]", "6.6 : Frac *");
 }
 
@@ -578,11 +588,7 @@ fn multiline_string_non_wasm() {
     );
 
     assert_multiline_str_eq!("", out.stderr.as_str());
-
-    // Don't consider the auto variable name ("# val1") at the end.
-    // The state.rs tests do that!
-    assert_multiline_str_eq!(expected, out.stdout.replace("# val1", "").trim());
-
+    assert_multiline_str_eq!(expected, out.stdout.trim());
     assert!(out.status.success());
 }
 
@@ -677,16 +683,28 @@ fn type_problem() {
 }
 
 #[test]
-fn issue_2149() {
+fn issue_2149_i8_ok() {
     expect_success(r#"Str.toI8 "127""#, "Ok 127 : Result I8 [InvalidNumStr]");
+}
+
+#[test]
+fn issue_2149_i8_err() {
     expect_success(
         r#"Str.toI8 "128""#,
         "Err InvalidNumStr : Result I8 [InvalidNumStr]",
     );
+}
+
+#[test]
+fn issue_2149_i16_ok() {
     expect_success(
         r#"Str.toI16 "32767""#,
         "Ok 32767 : Result I16 [InvalidNumStr]",
     );
+}
+
+#[test]
+fn issue_2149_i16_err() {
     expect_success(
         r#"Str.toI16 "32768""#,
         "Err InvalidNumStr : Result I16 [InvalidNumStr]",
@@ -1385,18 +1403,12 @@ fn interpolation_with_nested_interpolation() {
                 <https://www.roc-lang.org/tutorial#string-interpolation>
 
 
-                Enter an expression to evaluate, or a definition (like x = 1) to use in future expressions.
-
-                Unless there was a compile-time error, expressions get automatically named so you can refer to them later.
-                For example, if you see # val1 after an output, you can now refer to that expression as val1 in future expressions.
-
-                Tips:
+                Enter an expression to evaluate, or a definition (like x = 1) to use later.
 
                   - ctrl-v + ctrl-j makes a newline
-
-                  - :q to quit
-
-                  - :help"#
+                  - :q quits
+                  - :help shows this text again
+            "#
         ),
         // TODO figure out why the tests prints the repl help text at the end, but only after syntax errors or something?
         // In the actual repl this doesn't happen, only in the test.

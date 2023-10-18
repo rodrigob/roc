@@ -215,8 +215,7 @@ pub fn helper(
     let builtins_host_tempfile =
         roc_bitcode::host_tempfile().expect("failed to write host builtins object to tempfile");
 
-    // TODO make this an environment variable
-    if false {
+    if std::env::var("ROC_DEV_WRITE_OBJ").is_ok() {
         let file_path = std::env::temp_dir().join("app.o");
         println!("gen-test object file written to {}", file_path.display());
         std::fs::copy(&app_o_file, file_path).unwrap();
@@ -299,17 +298,22 @@ impl<T> RocCallResult<T> {
     }
 }
 
+fn get_raw_fn<'a, T>(
+    fn_name: &str,
+    lib: &'a libloading::Library,
+) -> libloading::Symbol<'a, unsafe extern "C" fn() -> T> {
+    unsafe {
+        lib.get(fn_name.as_bytes())
+            .ok()
+            .ok_or(format!("Unable to JIT compile `{fn_name}`"))
+            .expect("errored")
+    }
+}
+
 fn get_test_main_fn<T>(
     lib: &libloading::Library,
 ) -> libloading::Symbol<unsafe extern "C" fn() -> RocCallResult<T>> {
-    let main_fn_name = "test_main";
-
-    unsafe {
-        lib.get(main_fn_name.as_bytes())
-            .ok()
-            .ok_or(format!("Unable to JIT compile `{main_fn_name}`"))
-            .expect("errored")
-    }
+    get_raw_fn("test_main", lib)
 }
 
 pub(crate) fn run_test_main<T>(lib: &libloading::Library) -> Result<T, (String, CrashTag)> {
@@ -326,10 +330,58 @@ impl<T: Sized> From<RocCallResult<T>> for Result<T, (String, CrashTag)> {
     }
 }
 
+// only used in tests
+pub(crate) fn asm_evals_to<T, U, F>(
+    src: &str,
+    expected: U,
+    transform: F,
+    leak: bool,
+    lazy_literals: bool,
+) where
+    U: PartialEq + std::fmt::Debug,
+    F: FnOnce(T) -> U,
+{
+    use bumpalo::Bump;
+
+    let arena = Bump::new();
+    let (_main_fn_name, errors, lib) =
+        crate::helpers::dev::helper(&arena, src, leak, lazy_literals);
+
+    let result = crate::helpers::dev::run_test_main::<T>(&lib);
+
+    if !errors.is_empty() {
+        dbg!(&errors);
+
+        assert_eq!(
+            errors,
+            std::vec::Vec::new(),
+            "Encountered errors: {:?}",
+            errors
+        );
+    }
+
+    match result {
+        Ok(value) => {
+            let expected = expected;
+            #[allow(clippy::redundant_closure_call)]
+            let given = transform(value);
+            assert_eq!(&given, &expected, "output is different");
+        }
+        Err((msg, tag)) => match tag {
+            CrashTag::Roc => panic!(r#"Roc failed with message: "{msg}""#),
+            CrashTag::User => panic!(r#"User crash with message: "{msg}""#),
+        },
+    }
+}
+
+pub(crate) fn identity<T>(x: T) -> T {
+    x
+}
+
 #[allow(unused_macros)]
 macro_rules! assert_evals_to {
     ($src:expr, $expected:expr, $ty:ty) => {{
-        assert_evals_to!($src, $expected, $ty, (|val| val));
+        assert_evals_to!($src, $expected, $ty, $crate::helpers::dev::identity);
     }};
     ($src:expr, $expected:expr, $ty:ty, $transform:expr) => {
         // Same as above, except with an additional transformation argument.
@@ -347,41 +399,13 @@ macro_rules! assert_evals_to {
         }
     };
     ($src:expr, $expected:expr, $ty:ty, $transform:expr, $leak:expr, $lazy_literals:expr) => {
-        use bumpalo::Bump;
-
-        let arena = Bump::new();
-        let (_main_fn_name, errors, lib) =
-            $crate::helpers::dev::helper(&arena, $src, $leak, $lazy_literals);
-
-        let result = $crate::helpers::dev::run_test_main::<$ty>(&lib);
-
-        if !errors.is_empty() {
-            dbg!(&errors);
-
-            assert_eq!(
-                errors,
-                std::vec::Vec::new(),
-                "Encountered errors: {:?}",
-                errors
-            );
-        }
-
-        match result {
-            Ok(value) => {
-                let expected = $expected;
-                #[allow(clippy::redundant_closure_call)]
-                let given = $transform(value);
-                assert_eq!(&given, &expected, "output is different");
-            }
-            Err((msg, tag)) => {
-                use roc_mono::ir::CrashTag;
-
-                match tag {
-                    CrashTag::Roc => panic!(r#"Roc failed with message: "{msg}""#),
-                    CrashTag::User => panic!(r#"User crash with message: "{msg}""#),
-                }
-            }
-        }
+        $crate::helpers::dev::asm_evals_to::<$ty, _, _>(
+            $src,
+            $expected,
+            $transform,
+            $leak,
+            $lazy_literals,
+        );
     };
 }
 
